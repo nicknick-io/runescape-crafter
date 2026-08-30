@@ -2,6 +2,37 @@
     <div class="max-w-4xl"><h1 class="text-3xl font-bold text-gray-900">Recipe builder</h1><p class="mt-2 text-gray-600">Build a safe crafting dependency graph from locally imported items.</p>@if(session('status'))<p class="mt-4 rounded-xl bg-emerald-50 p-3 text-emerald-700">{{ session('status') }}</p>@endif
 
     <form wire:submit="save" class="mt-8 space-y-8">
+        <!-- AI Generation Section -->
+        <div class="rounded-2xl border border-blue-200 bg-blue-50 p-6">
+            <h2 class="mb-4 font-semibold text-gray-900">🤖 Generate from RuneScape Wiki</h2>
+            <p class="mb-4 text-sm text-gray-600">Paste a RuneScape wiki URL (e.g., https://runescape.wiki/w/Bronze_bar) to auto-generate recipe details</p>
+            
+            @if($generationError)
+                <div class="mb-4 rounded-lg bg-rose-100 p-3 text-sm text-rose-700">
+                    {{ $generationError }}
+                </div>
+            @endif
+            
+            <div class="flex gap-2">
+                <input 
+                    wire:model="wikiUrl" 
+                    type="url" 
+                    placeholder="https://runescape.wiki/w/Bronze_bar"
+                    class="flex-1 rounded-lg border-gray-300 bg-white px-3 py-2 text-gray-900"
+                    {{ $isGenerating ? 'disabled' : '' }}
+                />
+                <button 
+                    type="button"
+                    wire:click="generateFromWiki"
+                    wire:loading.attr="disabled"
+                    class="rounded-lg bg-blue-600 px-4 py-2 font-medium text-white transition hover:bg-blue-700 disabled:opacity-50"
+                >
+                    <span wire:loading.remove>✨ Generate</span>
+                    <span wire:loading>Generating...</span>
+                </button>
+            </div>
+        </div>
+
         <!-- Recipe Info Section -->
         <div class="rounded-2xl border border-gray-200 bg-white p-6">
             <h2 class="mb-4 font-semibold text-gray-900">Recipe details</h2>
@@ -11,6 +42,18 @@
                 <label class="block"><span class="text-sm font-medium text-gray-700">Level</span><input wire:model="levelRequired" type="number" min="1" class="mt-1 w-full rounded-xl border-gray-300 bg-gray-50 px-3 py-2 text-gray-900"></label>
                 <label class="block"><span class="text-sm font-medium text-gray-700">XP</span><input wire:model="xp" type="number" min="0" step=".01" class="mt-1 w-full rounded-xl border-gray-300 bg-gray-50 px-3 py-2 text-gray-900"></label>
             </div>
+            
+            @if($toolName)
+                <div class="mt-4 flex items-center gap-3 rounded-lg bg-amber-50 p-3">
+                    <span class="text-sm font-medium text-gray-700">Tool:</span>
+                    <span class="text-sm text-gray-900 font-semibold">{{ $toolName }}</span>
+                    @if($toolId)
+                        <span class="text-xs text-gray-500">(ID: {{ $toolId }})</span>
+                    @else
+                        <span class="text-xs text-amber-600">Not found in database</span>
+                    @endif
+                </div>
+            @endif
         </div>
 
         <!-- Visual Tree Section -->

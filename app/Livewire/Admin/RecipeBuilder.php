@@ -5,6 +5,7 @@ namespace App\Livewire\Admin;
 use App\Models\Item;
 use App\Models\Recipe;
 use App\Services\CraftingCostService;
+use App\Services\WikiScraperService;
 use Illuminate\Validation\Rule;
 use Livewire\Attributes\On;
 use Livewire\Component;
@@ -19,6 +20,11 @@ class RecipeBuilder extends Component
     public float $xp = 0;
     public ?int $editingIngredientIndex = null;
     public int $selectingFor = -1; // -1 for output, >= 0 for ingredient index
+    public string $wikiUrl = '';
+    public bool $isGenerating = false;
+    public ?string $generationError = null;
+    public ?int $toolId = null;
+    public ?string $toolName = null;
     
     /** @var array<int, array{item_id: int|null, quantity: float}> */ 
     public array $ingredients = [['item_id' => null, 'quantity' => 1]];
@@ -26,6 +32,50 @@ class RecipeBuilder extends Component
     public function addIngredient(): void 
     { 
         $this->ingredients[] = ['item_id' => null, 'quantity' => 1]; 
+    }
+    
+    public function generateFromWiki(WikiScraperService $scraper): void
+    {
+        try {
+            $this->validate(['wikiUrl' => ['required', 'url']]);
+            $this->isGenerating = true;
+            $this->generationError = null;
+            
+            // Scrape the wiki page
+            $data = $scraper->scrapeRecipe($this->wikiUrl);
+            
+            if ($data['confidence_score'] < 0.3) {
+                $this->generationError = 'Could not reliably extract recipe data from this page. Confidence too low.';
+                $this->isGenerating = false;
+                return;
+            }
+            
+            // Populate form fields with extracted data
+            $this->outputItemId = $data['output_item_id'];
+            $this->skill = $data['skill'] ?? 'Crafting';
+            $this->levelRequired = (int) ($data['level_required'] ?? 1);
+            $this->xp = (float) ($data['xp'] ?? 0);
+            $this->outputQuantity = (int) ($data['output_quantity'] ?? 1);
+            $this->toolId = $data['tool_id'] ?? null;
+            $this->toolName = $data['tool_name'] ?? null;
+            $this->wikiUrl = $data['wiki_url'] ?? $this->wikiUrl;
+            
+            // Populate ingredients
+            $this->ingredients = array_map(fn ($ing) => [
+                'item_id' => $ing['item_id'],
+                'quantity' => (float) ($ing['quantity'] ?? 1),
+            ], $data['ingredients'] ?? []);
+            
+            if (empty($this->ingredients)) {
+                $this->ingredients = [['item_id' => null, 'quantity' => 1]];
+            }
+            
+            session()->flash('status', 'Recipe generated from wiki! Please review and fact-check before saving.');
+        } catch (\Throwable $e) {
+            $this->generationError = 'Failed to generate recipe: ' . $e->getMessage();
+        } finally {
+            $this->isGenerating = false;
+        }
     }
     
     public function removeIngredient(int $index): void 
@@ -79,14 +129,38 @@ class RecipeBuilder extends Component
         $ids = array_map(fn (array $ingredient) => (int) $ingredient['item_id'], $this->ingredients);
         $costs->validateRecipeIngredients($this->outputItemId, $ids);
         
+        // Determine if this was generated from wiki
+        $isGenerated = !empty($this->wikiUrl);
+        
         $recipe = Recipe::updateOrCreate(
             ['output_item_id' => $this->outputItemId],
-            ['output_quantity' => $this->outputQuantity, 'skill' => $this->skill, 'level_required' => $this->levelRequired, 'xp' => $this->xp]
+            [
+                'output_quantity' => $this->outputQuantity,
+                'skill' => $this->skill,
+                'level_required' => $this->levelRequired,
+                'xp' => $this->xp,
+                'wiki_url' => $this->wikiUrl ?: null,
+                'tool_id' => $this->toolId,
+                'needs_review' => $isGenerated, // Mark AI-generated recipes as needs_review
+            ]
         );
         
         $recipe->ingredients()->delete();
         $recipe->ingredients()->createMany($this->ingredients);
-        session()->flash('status', 'Recipe saved.');
+        
+        // Clear wiki URL and reset form
+        $this->wikiUrl = '';
+        $this->toolId = null;
+        $this->toolName = null;
+        $this->itemSearch = '';
+        $this->outputItemId = null;
+        $this->skill = 'Crafting';
+        $this->outputQuantity = 1;
+        $this->levelRequired = 1;
+        $this->xp = 0;
+        $this->ingredients = [['item_id' => null, 'quantity' => 1]];
+        
+        session()->flash('status', $isGenerated ? 'Recipe saved as draft - it will appear in the review queue.' : 'Recipe saved.');
     }
     
     public function render()
